@@ -1,28 +1,32 @@
 ---
 import { getCollection } from 'astro:content';
+import Layout from '../../layouts/Layout.astro';
 
 const posts = (await getCollection('blog')).sort(
   (a, b) => b.data.pubDate.getTime() - a.data.pubDate.getTime()
 );
 ---
 
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Blog</title>
-  </head>
-  <body style="font-family: Arial, sans-serif;">
-    <main style="max-width: 800px; margin: 0 auto; padding: 2rem;">
-      <h1>Blog</h1>
+<Layout
+  title="Blog | Axel De Mendoza"
+  description="Technical writing and engineering posts by Axel De Mendoza."
+>
+  <section class="max-w-3xl">
+    <p class="mb-3 text-sm uppercase tracking-[0.2em] text-neutral-400">Blog</p>
+    <h1 class="mb-8 text-4xl font-semibold tracking-tight text-white">Technical writing</h1>
 
-      <ul>
-        {posts.map((post) => (
-          <li>
-            <a href={`/blog/${post.data.slug}`}>{post.data.title}</a>
-          </li>
-        ))}
-      </ul>
-    </main>
-  </body>
-</html>
+    <div class="space-y-6">
+      {posts.map((post) => (
+        <article class="rounded-2xl border border-neutral-800 p-6 transition hover:border-neutral-700">
+          <p class="mb-2 text-sm text-neutral-400">{post.data.pubDate.toDateString()}</p>
+          <h2 class="mb-2 text-2xl font-semibold tracking-tight">
+            <a href={`/blog/${post.data.slug}`} class="hover:text-neutral-300">
+              {post.data.title}
+            </a>
+          </h2>
+          <p class="text-neutral-300">{post.data.description}</p>
+        </article>
+      ))}
+    </div>
+  </section>
+</Layout>
