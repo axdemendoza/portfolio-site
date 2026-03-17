@@ -1,5 +1,6 @@
 ---
 import { getCollection, render } from 'astro:content';
+import Layout from '../../layouts/Layout.astro';
 
 export async function getStaticPaths() {
   const posts = await getCollection('blog');
@@ -14,19 +15,14 @@ const { post } = Astro.props;
 const { Content } = await render(post);
 ---
 
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{post.data.title}</title>
-    <meta name="description" content={post.data.description} />
-  </head>
-  <body style="font-family: Arial, sans-serif;">
-    <main style="max-width: 800px; margin: 0 auto; padding: 2rem; line-height: 1.7;">
-      <p><a href="/blog">← Back to blog</a></p>
-      <h1>{post.data.title}</h1>
-      <p><em>{post.data.pubDate.toDateString()}</em></p>
+<Layout title={`${post.data.title} | Axel De Mendoza`} description={post.data.description}>
+  <article class="mx-auto max-w-3xl">
+    <a href="/blog" class="mb-8 inline-block text-sm text-neutral-400 hover:text-white">← Back to blog</a>
+    <h1 class="mb-3 text-4xl font-semibold tracking-tight text-white">{post.data.title}</h1>
+    <p class="mb-10 text-sm text-neutral-400">{post.data.pubDate.toDateString()}</p>
+
+    <div class="max-w-none space-y-6 text-neutral-200">
       <Content />
-    </main>
-  </body>
-</html>
+    </div>
+  </article>
+</Layout>
