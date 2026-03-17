@@ -15,7 +15,9 @@ Your code may depend on:
 - Databricks clusters
 - Production-like data environments
 
-Because of that, tests do not always run meaningfully in a standard CI runner alone. In many cases, they need to execute inside Databricks and report results back to your CI system.
+Because of that, tests do not always run meaningfully in a standard CI runner. In many cases, they need to execute inside Databricks and report results back to your CI system.
+
+In practice, this means running real tests inside Databricks directly from a pull request and automatically failing the pipeline if they break.
 
 This guide walks through how to build a clean end-to-end workflow that:
 
@@ -32,6 +34,27 @@ By the end of this setup, you will have a pipeline that:
 3. Executes your `pytest` suite in the Databricks environment
 4. Exports a JUnit XML report
 5. Publishes test results directly in Azure DevOps
+
+## What This Solves in Real-World Teams
+
+In many data and ML teams, testing breaks down at the exact point where it matters most: once code depends on Spark, Databricks clusters, and production-like environments.
+
+A local `pytest` run is useful, but it often is not enough to validate the actual execution path your code will take in production. Teams end up with a gap between development workflows and deployment reality.
+
+This setup closes that gap by giving you a repeatable CI workflow that:
+
+- runs tests in the environment your code actually depends on
+- reports results back to the same Azure DevOps workflow engineers already use
+- blocks pull requests when critical tests fail
+- makes Databricks development feel much closer to standard software engineering
+
+The result is a cleaner developer experience, earlier bug detection, and more confidence when shipping changes to shared data platforms.
+
+## End-to-End Flow
+
+![High-level CI flow for Databricks unit testing with Azure DevOps](/images/databricks-ci/ci-flow.png)
+
+*High-level CI flow for validating Databricks code from an Azure DevOps pull request. The pipeline invokes a Databricks job, runs the PR source branch tests, exports a JUnit XML report, and publishes results back to Azure DevOps for pass/fail enforcement.*
 
 ## Step 0: Prerequisites
 
@@ -65,7 +88,7 @@ def test_example(spark):
 
 ## Step 1: Create a Test Runner for CI
 
-We need a way to trigger `pytest` inside Databricks and export results in a format Azure DevOps understands.
+We need a way to trigger `pytest` inside Databricks and export results in a format Azure DevOps can consume.
 
 ### 1.1 Create a Test Runner Script
 
@@ -92,13 +115,15 @@ This script:
 - Writes results in JUnit XML format
 - Saves the report to `tests/reports/report.xml`
 
-That XML file is the key handoff between Databricks and Azure DevOps.
+That XML file is the key handoff between Databricks and Azure DevOps. Azure DevOps natively understands JUnit format, which allows it to display structured test results and enforce pipeline failure conditions.
 
 ## Step 2: Configure the Databricks CLI
 
 This step is optional for manual experimentation, but strongly recommended. It makes local validation easier and is useful when you automate the workflow later.
 
 ### 2.1 Generate a Personal Access Token
+
+![Databricks PAT creation screen](/images/databricks-ci/databricks-pat.png)
 
 Navigate to:
 
@@ -118,6 +143,8 @@ Enter:
 
 - Databricks host
 - Personal access token
+
+![Databricks config](/images/databricks-ci/db-configure.png)
 
 ## Step 3: Validate with a Databricks Job
 
@@ -159,11 +186,12 @@ If this file is generated, your Databricks execution layer is working correctly.
 
 ## Step 4: Create the Azure DevOps Pipeline
 
-Navigate to:
+Now we connect everything into an Azure DevOps pipeline that will:
+- trigger the Databricks job
+- retrieve test results
+- enforce pass/fail behavior on pull requests
 
-`Pipelines -> New Pipeline`
-
-Then select:
+Navigate to pipelines, then select:
 
 - Azure Repos Git
 - Your repository
@@ -253,4 +281,6 @@ This setup gives you:
 - Better confidence in production code changes
 - Automated quality enforcement for pull requests
 
-More importantly, it addresses one of the most common pain points in data engineering: running meaningful tests in distributed, data-dependent environments while still preserving a standard CI experience.
+More importantly, it addresses one of the most common pain points in data engineering: validating code that depends on distributed systems while still maintaining the rigor of modern CI practices.
+
+Instead of treating Databricks as a special-case environment, this approach brings it into the same testing and deployment discipline expected in production software systems.
