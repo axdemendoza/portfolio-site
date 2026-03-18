@@ -51,8 +51,14 @@ This setup closes that gap by giving you a repeatable CI workflow that:
 The result is a cleaner developer experience, earlier bug detection, and more confidence when shipping changes to shared data platforms.
 
 ## End-to-End Flow
+### CI Execution Flow (Azure DevOps ↔ Databricks)
+## End-to-End Flow
 
-![High-level CI flow for Databricks unit testing with Azure DevOps](/images/databricks-ci/ci-flow.png)
+<img
+  src="/images/databricks-ci/ci-flow.png"
+  alt="CI execution flow between Azure DevOps and Databricks"
+  class="mx-auto w-full max-w-3xl rounded-lg"
+/>
 
 *High-level CI flow for validating Databricks code from an Azure DevOps pull request. The pipeline invokes a Databricks job, runs the PR source branch tests, exports a JUnit XML report, and publishes results back to Azure DevOps for pass/fail enforcement.*
 
@@ -116,7 +122,7 @@ This script:
 
 - Runs your full test suite
 - Writes results in JUnit XML format
-- Saves the report to `tests/reports/report.xml`
+- Saves the report to `my_project/tests/reports/report.xml`
 
 That XML file is the key handoff between Databricks and Azure DevOps.
 
@@ -170,7 +176,7 @@ Create a local file (for example `databricks-run.json`) with the following conte
     {
       "task_key": "run-test-notebook",
       "notebook_task": {
-        "notebook_path": "Workspace/Repos/.../run_tests"
+        "notebook_path": "/Workspace/Repos/my_project/run_tests"
       },
       "existing_cluster_id": "<cluster-id>"
     }
@@ -198,6 +204,8 @@ After the job completes, go to Databricks and confirm that the test report was g
 ```text
 /Workspace/repos/my_project/tests/reports/report.xml
 ```
+
+This path corresponds to the Databricks workspace filesystem under /Workspace/Repos, where your repository is mounted.
 
 If this file exists, it means:
 - your tests successfully executed inside Databricks
@@ -268,7 +276,7 @@ Next, we invoke Databricks directly from the pipeline using a Bash task.
                 {
                   "task_key": "run-test-notebook",
                   "notebook_task": {
-                    "notebook_path": "Workspace/Repos/.../run_tests"
+                    "notebook_path": "/Workspace/Repos/my_project/run_tests"
                   },
                   "existing_cluster_id": "<cluster-id>"
                 }
@@ -365,14 +373,14 @@ steps:
                 {
                   "task_key": "run-test-notebook",
                   "notebook_task": {
-                    "notebook_path": "Workspace/Repos/.../run_tests"
+                    "notebook_path": "/Workspace/Repos/my_project/run_tests"
                   },
                   "existing_cluster_id": "<cluster-id>"
                 }
               ]
             }'
 
-      databricks workspace export /tests/reports/report.xml report.xml
+      databricks workspace export /Workspace/Repos/my_project/tests/reports/report.xml
 
 - task: PublishTestResults@2
   inputs:
