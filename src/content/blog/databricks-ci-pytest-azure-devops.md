@@ -56,6 +56,8 @@ The result is a cleaner developer experience, earlier bug detection, and more co
 
 *High-level CI flow for validating Databricks code from an Azure DevOps pull request. The pipeline invokes a Databricks job, runs the PR source branch tests, exports a JUnit XML report, and publishes results back to Azure DevOps for pass/fail enforcement.*
 
+---
+
 ## Step 0: Prerequisites
 
 Before getting started, make sure you have:
@@ -104,8 +106,9 @@ Add:
 import pytest
 
 pytest.main([
-    "--junit-xml=tests/reports/report.xml",
-    "tests"
+    "--junit-xml",
+    "/Workspace/Repos/my_project/tests/reports/report.xml",
+    "."
 ])
 ```
 
@@ -115,11 +118,15 @@ This script:
 - Writes results in JUnit XML format
 - Saves the report to `tests/reports/report.xml`
 
-That XML file is the key handoff between Databricks and Azure DevOps. Azure DevOps natively understands JUnit format, which allows it to display structured test results and enforce pipeline failure conditions.
+That XML file is the key handoff between Databricks and Azure DevOps.
+
+Azure DevOps natively understands JUnit format, which allows it to display structured test results and enforce pipeline failure conditions.
 
 ## Step 2: Configure the Databricks CLI
 
-This step is optional for manual experimentation, but strongly recommended. It makes local validation easier and is useful when you automate the workflow later.
+This step is optional, but useful for local validation and debugging before integrating with Azure DevOps.
+
+Databricks supports multiple authentication methods (PAT, OAuth, service principals). For simplicity, this example uses a personal access token (PAT).
 
 ### 2.1 Generate a Personal Access Token
 
@@ -129,7 +136,7 @@ Navigate to:
 
 `Databricks -> User Settings -> Developer -> Access Tokens`
 
-Create a new token and copy the value.
+Create a new token and save the key.
 
 ### 2.2 Configure the CLI
 
@@ -148,9 +155,13 @@ Enter:
 
 ## Step 3: Validate with a Databricks Job
 
-Before integrating with Azure DevOps, confirm that your tests run correctly inside Databricks.
+Before integrating with Azure DevOps, it is helpful to validate that your tests run correctly inside Databricks in isolation.
+
+In this step, we will trigger a Databricks job directly from the CLI using a local JSON definition. This allows you to debug test execution without involving the CI pipeline.
 
 ### 3.1 Create a Job Definition
+
+Create a local file (for example `databricks-run.json`) with the following contents:
 
 ```json
 {
@@ -159,7 +170,7 @@ Before integrating with Azure DevOps, confirm that your tests run correctly insi
     {
       "task_key": "run-test-notebook",
       "notebook_task": {
-        "notebook_path": "/Repos/.../run_tests"
+        "notebook_path": "Workspace/Repos/.../run_tests"
       },
       "existing_cluster_id": "<cluster-id>"
     }
@@ -167,39 +178,61 @@ Before integrating with Azure DevOps, confirm that your tests run correctly insi
 }
 ```
 
-### 3.2 Run the Job
+This defines a Databricks job that runs your test notebook on an existing cluster.
+
+### 3.2 Submit the Job from the CLI
+
+Run the following command locally:
 
 ```bash
-databricks jobs create --json-file job.json
-databricks jobs run-now --job-id <id>
+databricks jobs submit --json @databricks-run.json
 ```
+
+This sends the job definition to Databricks, which then executes the notebook remotely on the specified cluster.
+
 
 ### 3.3 Validate the Output
 
-Confirm that this file exists:
+After the job completes, go to Databricks and confirm that the test report was generated:
 
 ```text
-tests/reports/report.xml
+/Workspace/repos/my_project/tests/reports/report.xml
 ```
 
-If this file is generated, your Databricks execution layer is working correctly.
+If this file exists, it means:
+- your tests successfully executed inside Databricks
+- your JUnit XML report is being generated correctly
+
+At this point, the Databricks execution layer is working as expected, and you are ready to integrate it into an Azure DevOps pipeline.
+
+This step is optional but highly recommended. It isolates issues in your Databricks environment before introducing additional complexity from CI/CD orchestration.
 
 ## Step 4: Create the Azure DevOps Pipeline
 
-Now we connect everything into an Azure DevOps pipeline that will:
-- trigger the Databricks job
-- retrieve test results
-- enforce pass/fail behavior on pull requests
+Now we connect everything into an Azure DevOps pipeline that orchestrates the full test workflow:
 
-Navigate to pipelines, then select:
+- Determine which branch to test  
+- Trigger a Databricks job to run tests  
+- Export the test results  
+- Fail the pipeline if tests do not pass  
 
-- Azure Repos Git
-- Your repository
-- Python package
+Navigate to:
 
-### 4.1 Handle Branch Logic
+`Pipelines -> New Pipeline`
 
-We need to ensure the pipeline tests the correct branch, especially for pull requests.
+Then select:
+
+- Azure Repos Git  
+- Your repository  
+- Python package  
+
+---
+
+### 4.1 Determine Which Branch to Test
+
+When a pipeline runs, it needs to know which branch’s code to execute.
+
+This is especially important for pull requests, where you want to test the **source branch being merged**, not the target branch.
 
 ```yaml
 variables:
@@ -210,38 +243,64 @@ variables:
       value: ${{ replace(variables['System.PullRequest.SourceBranch'], 'refs/heads/', '') }}
 ```
 
-Why this matters:
+This logic ensures:
 
-- It handles both manual runs and pull request validation
-- It ensures the pipeline checks the actual feature branch
+- manual runs use the current branch
+- pull request runs use the PR source branch
 
-### 4.2 Trigger the Databricks Job from the Pipeline
+### 4.2 Run Tests in Databricks
+
+Next, we invoke Databricks directly from the pipeline using a Bash task.
 
 ```yaml
 - task: Bash@3
   inputs:
     targetType: 'inline'
     script: |
-      pip install databricks-cli
+      curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
 
-      databricks configure --token <<EOF
-      $(DATABRICKS_HOST)
-      $(DATABRICKS_TOKEN)
-      EOF
-
-      echo "Branch: $(branch_name)"
-      git checkout $(branch_name)
-
-      databricks jobs run-now --job-id <job-id>
+      databricks configure --host $(DATABRICKS_HOST) --token $(DATABRICKS_TOKEN)
+      echo $(branch_name)
+      databricks repos update /Workspace/repos/my_project --branch $(branch_name)
+      databricks jobs submit --json '{
+              "run_name": "run_unit_tests",
+              "tasks": [
+                {
+                  "task_key": "run-test-notebook",
+                  "notebook_task": {
+                    "notebook_path": "Workspace/Repos/.../run_tests"
+                  },
+                  "existing_cluster_id": "<cluster-id>"
+                }
+              ]
+            }'
 ```
 
-### 4.3 Export the Test Results
+This approach avoids rebuilding environments in the CI runner and instead executes tests directly in the Databricks workspace where the code runs in practice.
 
-```bash
+This step does several things:
+- installs the Databricks CLI in the pipeline environment
+- authenticates using secure pipeline variables
+- checks out the correct branch
+- triggers the Databricks job that runs your test notebook
+
+At this point, your tests are executing remotely inside Databricks.
+
+### 4.3 Export Test Results from Databricks
+
+Once tests complete, we need to retrieve the JUnit XML report.
+
+```yaml
 databricks workspace export /tests/reports/report.xml report.xml
 ```
 
-### 4.4 Publish the Test Results
+This command:
+- pulls the XML report from Databricks
+- saves it locally in the pipeline environment
+
+This file is the bridge between Databricks execution and Azure DevOps test reporting.
+
+### 4.4 Publish Results to Azure DevOps
 
 ```yaml
 - task: PublishTestResults@2
@@ -251,6 +310,77 @@ databricks workspace export /tests/reports/report.xml report.xml
     failTaskOnFailedTests: true
 ```
 
+Azure DevOps natively understands JUnit format, which allows it to:
+- display structured test results
+- mark the pipeline as failed if tests fail
+
+This is what enables automated enforcement of test quality on pull requests. Using a standard format like JUnit avoids custom parsing and allows CI systems to handle reporting and failure conditions automatically.
+
+### 4.5 Validate the Pipeline
+
+Once everything is configured:
+1. Run the pipeline manually to confirm it executes
+2. Open a pull request and verify the pipeline triggers automatically
+3. Intentionally break a test and confirm the pipeline fails
+4. Fix the test and confirm the pipeline passes
+
+At this point, you have a fully functioning CI pipeline for Databricks workflows.
+
+---
+
+## Full Pipeline YAML (Optional Reference)
+
+For completeness, here is the full pipeline configuration assembled from the components above:
+
+```yaml
+variables:
+  - name: branch_name
+    ${{ if startsWith(variables['Build.SourceBranch'], 'refs/heads/') }}:
+      value: ${{ replace(variables['Build.SourceBranch'], 'refs/heads/', '') }}
+    ${{ if startsWith(variables['Build.SourceBranch'], 'refs/pull/') }}:
+      value: ${{ replace(variables['System.PullRequest.SourceBranch'], 'refs/heads/', '') }}
+
+# trigger when PR created on the main branch
+trigger:
+- main
+
+# provision ubuntu VM
+pool: 
+  vmImage: 'ubuntu-latest'
+
+steps:
+# configure databricks CLI, checkout PR.source branch, and run notebook job
+- task: Bash@3
+  inputs:
+    targetType: 'inline'
+    script: |
+      curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+
+      databricks configure --host $(DATABRICKS_HOST) --token $(DATABRICKS_TOKEN)
+      echo $(branch_name)
+      databricks repos update /Workspace/repos/my_project --branch $(branch_name)
+      databricks jobs submit --json '{
+              "run_name": "run_unit_tests",
+              "tasks": [
+                {
+                  "task_key": "run-test-notebook",
+                  "notebook_task": {
+                    "notebook_path": "Workspace/Repos/.../run_tests"
+                  },
+                  "existing_cluster_id": "<cluster-id>"
+                }
+              ]
+            }'
+
+      databricks workspace export /tests/reports/report.xml report.xml
+
+- task: PublishTestResults@2
+  inputs:
+    testResultsFormat: 'JUnit'
+    testResultsFiles: 'report.xml'
+    testRunTitle: 'Databricks PyTest Results'
+    failTaskOnFailedTests: true
+```
 ## Step 5: Enforce CI on Pull Requests
 
 Navigate to:
@@ -259,23 +389,35 @@ Navigate to:
 Project Settings -> Repositories -> Policies -> Main Branch
 ```
 
-Enable:
+Enable build validation and configure it as:
+- Trigger: Automatic
+- Policy Requirement: Required
 
-- Build validation
-- Automatic trigger
-- Required
+![Azure DevOps build validation policy](/images/databricks-ci/build-policy.png)
+
+*Configuring build validation to require passing tests before allowing merges.*
+
+This ensures that:
+- every pull request automatically runs the pipeline
+- merges are blocked unless all tests pass
+
+This is what turns your pipeline from a passive check into an enforced quality gate for every code change.
 
 ## Step 6: Validate the End-to-End Flow
 
 Run through a quick sanity check:
 
-1. Open a pull request and confirm the pipeline triggers
-2. Intentionally break a test and confirm the pipeline fails
-3. Fix the test and confirm the pull request can merge
+1. Open a pull request and confirm the pipeline triggers automatically  
+2. Intentionally break a test and confirm the pipeline fails  
+3. Fix the test and confirm the pull request can merge  
+
+At this point, your CI pipeline is actively enforcing test quality on every code change.
+
+---
 
 ## Final Thoughts
 
-This setup gives you:
+This setup provides:
 
 - Real CI coverage for Databricks workflows
 - Better confidence in production code changes
