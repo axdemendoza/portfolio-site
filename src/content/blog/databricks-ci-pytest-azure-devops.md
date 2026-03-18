@@ -5,25 +5,22 @@ pubDate: "2026-03-16"
 description: "A step-by-step guide to running PyTest inside Databricks and publishing test results back to Azure DevOps."
 ---
 
-Continuous integration (CI) is a foundational software engineering practice: developers merge code into a shared repository, and automated tests validate those changes before they move forward.
+Most data teams aren’t testing their Databricks code the way it runs in production. Even fewer are running automated pipelines that execute those tests on every code change.
 
-In traditional applications, that is usually straightforward. In Databricks, it often is not.
+Local `pytest` runs help, but they miss a key problem: your code depends on Spark, clusters, and specific runtime environments.
 
-Your code may depend on:
+That means proper testing often needs to run inside Databricks itself and report results back to your CI system.
 
-- Spark sessions
-- Databricks clusters
-- Production-like data environments
+The challenge is that there’s no clean, built-in way to do this across Databricks and Azure DevOps. Tools like Nutter try to solve the problem, but they require rewriting your tests and moving away from standard frameworks like `pytest`.
 
-Because of that, tests do not always run meaningfully in a standard CI runner. In many cases, they need to execute inside Databricks and report results back to your CI system.
+This guide shows how to build an end-to-end workflow that:
 
-In practice, this means running real tests inside Databricks directly from a pull request and automatically failing the pipeline if they break.
+- runs `pytest` inside Databricks  
+- triggers from Azure DevOps pull requests  
+- exports JUnit XML results  
+- fails the pipeline when tests break  
 
-This guide walks through how to build a clean end-to-end workflow that:
-
-- Runs `pytest` inside Databricks
-- Triggers from Azure DevOps pipelines
-- Publishes results back to Azure DevOps with JUnit XML
+When I built this in early 2025, I spent a lot of time digging through documentation and realized there wasn’t a straightforward solution. I ended up building this from scratch, and this guide is that solution.
 
 ## What You Will Build
 
@@ -35,24 +32,7 @@ By the end of this setup, you will have a pipeline that:
 4. Exports a JUnit XML report
 5. Publishes test results directly in Azure DevOps
 
-## What This Solves in Real-World Teams
-
-In many data and ML teams, testing breaks down at the exact point where it matters most: once code depends on Spark, Databricks clusters, and production-like environments.
-
-A local `pytest` run is useful, but it often is not enough to validate the actual execution path your code will take in production. Teams end up with a gap between development workflows and deployment reality.
-
-This setup closes that gap by giving you a repeatable CI workflow that:
-
-- runs tests in the environment your code actually depends on
-- reports results back to the same Azure DevOps workflow engineers already use
-- blocks pull requests when critical tests fail
-- makes Databricks development feel much closer to standard software engineering
-
-The result is a cleaner developer experience, earlier bug detection, and more confidence when shipping changes to shared data platforms.
-
-## End-to-End Flow
 ### CI Execution Flow (Azure DevOps ↔ Databricks)
-## End-to-End Flow
 
 <img
   src="/images/databricks-ci/ci-flow.png"
@@ -100,10 +80,10 @@ We need a way to trigger `pytest` inside Databricks and export results in a form
 
 ### 1.1 Create a Test Runner Script
 
-Create the following file:
+Create the following notebook file:
 
 ```text
-my_project/tests/run_tests.py
+/Workspace/Repos/my_project/tests/run_tests
 ```
 
 Add:
@@ -122,7 +102,7 @@ This script:
 
 - Runs your full test suite
 - Writes results in JUnit XML format
-- Saves the report to `my_project/tests/reports/report.xml`
+- Saves the report to `/Workspace/Repos/my_project/tests/reports/report.xml`
 
 That XML file is the key handoff between Databricks and Azure DevOps.
 
@@ -234,7 +214,9 @@ Then select:
 - Your repository  
 - Python package  
 
----
+###  In the next sections, we will build the pipeline incrementally. Each snippet below represents a piece of the same `azure-pipelines.yml` file, which we will assemble into a complete pipeline at the end.
+
+--- 
 
 ### 4.1 Determine Which Branch to Test
 
@@ -256,7 +238,7 @@ This logic ensures:
 - manual runs use the current branch
 - pull request runs use the PR source branch
 
-### 4.2 Run Tests in Databricks
+### 4.2 Add Databricks Test Execution Step
 
 Next, we invoke Databricks directly from the pipeline using a Bash task.
 
@@ -294,7 +276,7 @@ This step does several things:
 
 At this point, your tests are executing remotely inside Databricks.
 
-### 4.3 Export Test Results from Databricks
+### 4.3 Add Test Export Step
 
 Once tests complete, we need to retrieve the JUnit XML report.
 
@@ -308,7 +290,7 @@ This command:
 
 This file is the bridge between Databricks execution and Azure DevOps test reporting.
 
-### 4.4 Publish Results to Azure DevOps
+### 4.4 Add Test Reporting Step to Azure DevOps
 
 ```yaml
 - task: PublishTestResults@2
